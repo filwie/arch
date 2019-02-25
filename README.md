@@ -1,4 +1,4 @@
-# arch-scripts
+# Arch
 This repository contains my scripts for configuring Arch, as well as below guide,
 which describes the installation procedure.
 
