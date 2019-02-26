@@ -1,49 +1,55 @@
 #!/usr/bin/env zsh
+# vim: set ft=zsh sw=2 ts=2 sts=2:
 
 # TODO:
 # 1. groups should not get overwritten
 # 2. when running without args do not start SSH
 
 
-declare -a USERS GROUPS PACKAGES
+  declare -a USERS GROUPS PACKAGES
 
-LOG=./configure_arch.log
+  LOG="/tmp/${0:t}-$(date +'%Y-%m-%dT%H:%M:%S').log"
 
-GROUPS=("users" "wheel")
-PACKAGES=("base" "base-devel" "sudo" "tmux" "openssh" "python" "python-pip")
+  GROUPS=("users" "wheel")
+  PACKAGES=("base" "base-devel" "sudo" "tmux" "openssh" "python" "python-pip")
 
-USER_ID=666
-NOPASSWD_SUDO=0
-CHANGE_PASSWD=0
-REFLECTOR=0
-INSTALL_PACKAGES=0
-HTTPS_MIRRORS=0
+  USER_ID=666
+  NOPASSWD_SUDO=0
+  CHANGE_PASSWD=0
+  REFLECTOR=0
+  INSTALL_PACKAGES=0
+  HTTPS_MIRRORS=0
+  DRY_RUN=0
 
-function usage () {
-  local example
-  example="USAGE: ${1} [-h/--help]"
-  example+=" [{-u/--user USER}]"
-  example+=" [{-g/--group GROUP}]"
-  example+=" [-p/--passwd]"
-  example+=" [-n/--nopasswd-sudo]"
-  example+=" [-r/--reflector]"
-  example+=" [-s/--https-mirrors]"
-  example+=" [-i/--install-packages]"
-  echo -e "${example}" >> /dev/stderr
-  exit 1
-}
+  function usage () {
+    local example
+    example="USAGE: ${1} [-h/--help]"
+    example+=" [{-u/--user USER}]"
+    example+=" [{-g/--group GROUP}]"
+    example+=" [-p/--passwd]"
+    example+=" [-n/--nopasswd-sudo]"
+    example+=" [-r/--reflector]"
+    example+=" [-s/--https-mirrors]"
+    example+=" [-i/--install-packages]"
+    echo -e "${example}" >> /dev/stderr
+    exit 1
+  }
+
+[[ ${#} -lt 1 ]] && usage
 
 local help users groups nopasswd_sudo passwd reflector install_packages https_mirrors
 zparseopts -D -E \
-           h=help -help=help \
-           u+:=users g+:=groups \
-           n=nopasswd_sudo -nopasswd-sudo=nopasswd_sudo \
-           p=passwd -passwd=passwd \
-           r=reflector -reflector=reflector \
-           i=install_packages -install-packages=install_packages \
-           s=https_mirrors -https-mirrors=https_mirrors
+  h=help -help=help \
+  d=dry_run -dry-run=dry_run \
+  u+:=users g+:=groups \
+  n=nopasswd_sudo -nopasswd-sudo=nopasswd_sudo \
+  p=passwd -passwd=passwd \
+  r=reflector -reflector=reflector \
+  i=install_packages -install-packages=install_packages \
+  s=https_mirrors -https-mirrors=https_mirrors
 
 [[ -n "${help}" ]]             && usage "${0}"
+[[ -n "${dry_run}" ]]          && DRY_RUN=1
 [[ -n "${users}" ]]            && USERS=("${users[@]:#-u}")
 [[ -n "${groups}" ]]           && GROUPS=("${groups[@]:#-g}")
 [[ -n "${nopasswd_sudo}" ]]    && NOPASSWD_SUDO=1
@@ -58,18 +64,23 @@ function warn_msg () { echo -e "$(tput setaf 3)${1}$(tput sgr0)" }
 
 function error_msg () {
   echo -e "$(tput setaf 1)${1}$(tput sgr0)" > /dev/stderr
-  return "${1:-1}"
+  return "${2:-1}"
 }
 
-function ok () { info_msg "OK" }
-function skip () { warn_msg "SKIP" }
-function fail() { error_msg "FAIL" 1 }
+function ok () { info_msg "OK" | tee -a "${LOG}" }
+function skip () { warn_msg "SKIP" | tee -a "${LOG}" }
+function fail() { error_msg "FAIL" 1 | tee -a "${LOG}" }
 
 function run_log_cmd () {
   [[ -n ${1} ]] || return
   echo -en "$(tput setaf 12)[$(date +'%H:%M:%S')] CMD: ${1}$(tput sgr0) " | tee -a "${LOG}"
-  echo >> "${LOG}"
-  [[ "${2}" == "skip" ]] && { skip; return }
+
+  if [[ "${2}" != "alwaysrun" ]]; then
+    if [[ "${2}" == "skip" ]] || [[ "${DRY_RUN}" == 1 ]]; then
+      skip
+      return
+    fi
+  fi
   eval "${1} &>> ${LOG} " && ok || fail
 }
 
@@ -111,10 +122,11 @@ function create_users () {
 
 function change_passwords () {
   [[ CHANGE_PASSWD -gt 0 ]] || return
-  local users
+  local users passwd
   users=("${USERS[@]}" "root")
   for user in "${users[@]}"; do
-    run_log_cmd "passwd ${user}"
+    read -s "passwd?Password for user ${user}: " passwd
+    chpasswd "${user}:${passwd}"
   done
 }
 
@@ -138,10 +150,26 @@ function start_sshd () {
   run_log_cmd "systemctl start sshd"
 }
 
-function _is_passwd_sudo { grep -Pq "^\%wheel\s+ALL\=\(ALL\)\s+ALL" /etc/sudoers }
-function _is_nopasswd_sudo { grep -Pq "^\%wheel\s+ALL\=\(ALL\)\s+NOPASSWD:\s+ALL" /etc/sudoers }
+function _lineinfile () {
+  [[ -n "${1}" ]] || return 1
+  [[ -n "${2}" ]] || return 1
+  [[ -f "${2}" ]] || error_msg "File ${2} does not exist!" 1
+  grep -Pq "${1}" "${2}" 2> /dev/null
+}
+
+function _is_passwd_sudo { _lineinfile "^\%wheel\s+ALL\=\(ALL\)\s+ALL" /etc/sudoers }
+function _is_nopasswd_sudo { _lineinfile "^\%wheel\s+ALL\=\(ALL\)\s+NOPASSWD:\s+ALL" /etc/sudoers }
+
+function _ask_for_confirmation () {
+  read -q "?${1}"
+  echo
+}
 
 function enable_sudo () {
+  if ! command -v sudo &> /dev/null; then
+    error_msg "Cannot enable sudo - it is not installed" 0
+    _ask_for_confirmation "Correct problem by installing it now? [y/n] " && run_log_cmd "pacman -S sudo"
+  fi
   local wheel_line
   wheel_line="%wheel ALL=(ALL) ALL"
   [[ ${NOPASSWD_SUDO} -gt 0 ]] && wheel_line="%wheel ALL=(ALL) NOPASSWD: ALL"
@@ -149,6 +177,10 @@ function enable_sudo () {
   _is_passwd_sudo && info_msg "Privilege escalation enabled. Password required."
   _is_nopasswd_sudo && info_msg "Passwordless privilege escalation enabled."
 }
+
+function remove_color_escape_sequences () { sed -i 's/\x1B\[[0-9;]*[JKmsu]//g' ${1} }
+
+function prompt_display_log () { _ask_for_confirmation 'Display log? [y/n]' && cat "${LOG}" }
 
 function main () {
   info_msg "users: ${(j., .)USERS[@]}"
@@ -160,8 +192,9 @@ function main () {
   change_passwords
   update_sort_mirrors
   install_packages
-  start_sshd
   enable_sudo
+  remove_color_escape_sequences "${LOG}"
+  prompt_display_log
 }
 
 main "${@}"
