@@ -163,9 +163,9 @@ hostnamectl set-hostname {{ hostname }}
 echo "KEYMAP=pl" > /etc/vconsole.conf
 ```
 
-#### Install `base-devel` group, `btrfs` utils `zsh` and (__if Intel__) Intel microcode
+#### Install `base-devel` group, `btrfs` utils and (__if Intel__) Intel microcode
 ``` sh
-pacman -Syu base-devel btrfs-progs zsh intel-ucode
+pacman -Syu base-devel btrfs-progs intel-ucode
 ```
 
 #### Add `encrypt` and `btrfs` [hooks](https://wiki.archlinux.org/index.php/mkinitcpio#HOOKS)
