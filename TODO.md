@@ -1,0 +1,4 @@
+- [ ] cron job running reflector
+- [ ] cron job running backup scripts
+- [ ] automate generating ssh keys (password-protected)
+- [ ] automate adding keys to github (using API)
