@@ -23,6 +23,8 @@ As well as
 Below steps were tested only on `archlinux-2019.02.01-x86_64` version of installation media.
 ## From archiso
 #### Boot live USB in UEFI mode (verify that `/sys/firmware/efi/efivars` directory is non-empty)
+#### [optional] To enable WIFI `wifi-menu` utility can be used
+
 #### [optional] To complete the instalation via `SSH` set `root` password and start `SSH` server
 ``` sh
 passwd
